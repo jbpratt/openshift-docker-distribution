@@ -350,6 +350,24 @@ func (d *driver) Move(ctx context.Context, sourcePath string, destPath string) e
 		}
 		return err
 	}
+	copyStatus := *resp.CopyStatus
+	for copyStatus == blob.CopyStatusTypePending {
+		props, err := destBlobRef.GetProperties(ctx, nil)
+		if err != nil {
+			return err
+		}
+		copyStatus = *props.CopyStatus
+		if copyStatus == blob.CopyStatusTypeAborted || copyStatus == blob.CopyStatusTypeFailed {
+			if props.CopyStatusDescription != nil {
+				return fmt.Errorf("failed to move blob: %s", *props.CopyStatusDescription)
+			}
+			return fmt.Errorf("failed to move blob with copy id %s", *props.CopyID)
+		}
+
+		if copyStatus == blob.CopyStatusTypePending {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 
 	copyStatus := *resp.CopyStatus
 
