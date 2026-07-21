@@ -35,12 +35,11 @@ import (
 	"github.com/distribution/distribution/v3/registry/storage/driver/base"
 	"github.com/distribution/distribution/v3/registry/storage/driver/factory"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	"golang.org/x/oauth2/jwt"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	htransport "google.golang.org/api/transport/http"
 )
 
 const (
@@ -77,6 +76,7 @@ type driverParameters struct {
 	// pushes by ensuring we aren't DoSing our own server with many
 	// connections.
 	maxConcurrency uint64
+	storageHost    string
 }
 
 func init() {
@@ -102,6 +102,7 @@ type driver struct {
 	privateKey    []byte
 	rootDirectory string
 	chunkSize     int
+	storageHost   string
 }
 
 // Wrapper wraps `driver` with a throttler, ensuring that no more than N
@@ -153,22 +154,44 @@ func FromParameters(ctx context.Context, parameters map[string]any) (storagedriv
 		}
 	}
 
-	var ts oauth2.TokenSource
+	var httpClient *http.Client
 	var err error
 	var gcs *storage.Client
 	var options []option.ClientOption
 	var creds *google.Credentials
+	storageHost := "storage.googleapis.com"
+	useSignedURLRedirects := false
 	if keyfile, ok := parameters["keyfile"]; ok {
 		jsonKey, err := os.ReadFile(fmt.Sprint(keyfile))
 		if err != nil {
 			return nil, err
 		}
-		creds, err = google.CredentialsFromJSON(context.Background(), jsonKey, storage.ScopeFullControl)
+		creds, err = google.CredentialsFromJSON(ctx, jsonKey, storage.ScopeFullControl)
 		if err != nil {
 			return nil, err
 		}
-		ts = creds.TokenSource
-		options = append(options, option.WithCredentialsFile(fmt.Sprint(keyfile)))
+		ud, err := creds.GetUniverseDomain()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get universe domain: %w", err)
+		}
+		clientOpts := []option.ClientOption{
+			option.WithCredentialsJSON(jsonKey),
+			option.WithUniverseDomain(ud),
+		}
+		options = append(options, clientOpts...)
+		if ud != "" && ud != "googleapis.com" {
+			options = append(options, option.WithEndpoint(fmt.Sprintf("https://storage.%s/storage/v1/", ud)))
+		}
+		httpClient, _, err = htransport.NewClient(ctx, append(clientOpts, option.WithScopes(storage.ScopeFullControl))...)
+		if err != nil {
+			return nil, err
+		}
+		if ud != "" {
+			storageHost = fmt.Sprintf("storage.%s", ud)
+		}
+		if ud == "" || ud == "googleapis.com" {
+			useSignedURLRedirects = true
+		}
 	} else if credentials, ok := parameters["credentials"]; ok {
 		credentialMap, ok := credentials.(map[any]any)
 		if !ok {
@@ -189,21 +212,39 @@ func FromParameters(ctx context.Context, parameters map[string]any) (storagedriv
 			return nil, fmt.Errorf("failed to marshal gcs credentials to json")
 		}
 
-		creds, err = google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
+		creds, err = google.CredentialsFromJSON(ctx, data, storage.ScopeFullControl)
 		if err != nil {
 			return nil, err
 		}
-		ts = creds.TokenSource
-		options = append(options, option.WithCredentialsJSON(data))
+		ud, err := creds.GetUniverseDomain()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get universe domain: %w", err)
+		}
+		clientOpts := []option.ClientOption{
+			option.WithCredentialsJSON(data),
+			option.WithUniverseDomain(ud),
+		}
+		options = append(options, clientOpts...)
+		if ud != "" && ud != "googleapis.com" {
+			options = append(options, option.WithEndpoint(fmt.Sprintf("https://storage.%s/storage/v1/", ud)))
+		}
+		httpClient, _, err = htransport.NewClient(ctx, append(clientOpts, option.WithScopes(storage.ScopeFullControl))...)
+		if err != nil {
+			return nil, err
+		}
+		if ud != "" {
+			storageHost = fmt.Sprintf("storage.%s", ud)
+		}
+		if ud == "" || ud == "googleapis.com" {
+			useSignedURLRedirects = true
+		}
 	} else {
 		var err error
-		// DefaultTokenSource is a convenience method. It first calls FindDefaultCredentials,
-		// then uses the credentials to construct an http.Client or an oauth2.TokenSource.
-		// https://pkg.go.dev/golang.org/x/oauth2/google#hdr-Credentials
-		ts, err = google.DefaultTokenSource(ctx, storage.ScopeFullControl)
+		httpClient, _, err = htransport.NewClient(ctx, option.WithScopes(storage.ScopeFullControl))
 		if err != nil {
 			return nil, err
 		}
+		useSignedURLRedirects = true
 	}
 
 	if userAgent, ok := parameters["useragent"]; ok {
@@ -221,20 +262,19 @@ func FromParameters(ctx context.Context, parameters map[string]any) (storagedriv
 	if err != nil {
 		return nil, fmt.Errorf("maxconcurrency config error: %s", err)
 	}
-	var credsJSON []byte
-	if creds != nil {
-		credsJSON = creds.JSON
-	}
 
 	params := driverParameters{
 		bucket:         fmt.Sprint(bucket),
 		rootDirectory:  fmt.Sprint(rootDirectory),
-		client:         oauth2.NewClient(ctx, ts),
-		email:          getEmailFromCredentialsJSON(credsJSON),
-		privateKey:     getPrivateKeyFromCredentialsJSON(credsJSON),
+		client:         httpClient,
 		chunkSize:      chunkSize,
 		maxConcurrency: maxConcurrency,
 		gcs:            gcs,
+		storageHost:    storageHost,
+	}
+	if useSignedURLRedirects && creds != nil {
+		params.email = getEmailFromCredentialsJSON(creds.JSON)
+		params.privateKey = getPrivateKeyFromCredentialsJSON(creds.JSON)
 	}
 
 	return New(ctx, params)
@@ -256,6 +296,7 @@ func New(ctx context.Context, params driverParameters) (storagedriver.StorageDri
 		privateKey:    params.privateKey,
 		client:        params.client,
 		chunkSize:     params.chunkSize,
+		storageHost:   params.storageHost,
 	}
 
 	return &Wrapper{
@@ -802,6 +843,9 @@ func (d *driver) RedirectURL(r *http.Request, path string) (string, error) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return "", nil
 	}
+	if d.privateKey == nil || d.email == "" {
+		return "", nil
+	}
 
 	opts := &storage.SignedURLOptions{
 		GoogleAccessID: d.email,
@@ -819,9 +863,13 @@ func (d *driver) Walk(ctx context.Context, path string, f storagedriver.WalkFn, 
 }
 
 func (w *writer) newSession() (uri string, err error) {
+	host := "www.googleapis.com"
+	if w.driver.storageHost != "" {
+		host = w.driver.storageHost
+	}
 	u := &url.URL{
 		Scheme:   "https",
-		Host:     "www.googleapis.com",
+		Host:     host,
 		Path:     fmt.Sprintf("/upload/storage/v1/b/%v/o", w.object.BucketName()),
 		RawQuery: fmt.Sprintf("uploadType=resumable&name=%v", w.object.ObjectName()),
 	}
