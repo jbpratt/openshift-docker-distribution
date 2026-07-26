@@ -267,6 +267,7 @@ func FromParameters(ctx context.Context, parameters map[string]any) (storagedriv
 		bucket:         fmt.Sprint(bucket),
 		rootDirectory:  fmt.Sprint(rootDirectory),
 		client:         httpClient,
+
 		chunkSize:      chunkSize,
 		maxConcurrency: maxConcurrency,
 		gcs:            gcs,
