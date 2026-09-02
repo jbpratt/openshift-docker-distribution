@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+
 	"cloud.google.com/go/storage"
 	"github.com/distribution/distribution/v3/internal/dcontext"
 	storagedriver "github.com/distribution/distribution/v3/registry/storage/driver"
@@ -25,7 +26,7 @@ var (
 
 func init() {
 	bucket := os.Getenv("REGISTRY_STORAGE_GCS_BUCKET")
-	credentials_path := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	credentials := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 	// Skip GCS storage driver tests if environment variable parameters are not provided
 	skipCheck = func(tb testing.TB) {
@@ -54,54 +55,6 @@ func init() {
 		email = getEmailFromCredentialsJSON(creds.JSON)
 		privateKey = getPrivateKeyFromCredentialsJSON(creds.JSON)
 		ts = creds.TokenSource
-
-		gcs, err := storage.NewClient(dcontext.Background(), option.WithCredentialsJSON(jsonKey))
-		if err != nil {
-			panic(fmt.Sprintf("Error initializing gcs client : %v", err))
-		}
-
-		parameters := driverParameters{
-			bucket:         bucket,
-			rootDirectory:  rootDirectory,
-			email:          email,
-			privateKey:     privateKey,
-			client:         oauth2.NewClient(dcontext.Background(), ts),
-			chunkSize:      defaultChunkSize,
-			gcs:            gcs,
-			maxConcurrency: 8,
-		}
-
-		return New(context.Background(), parameters)
-	}
-
-	gcsDriverConstructor = func(rootDirectory string) (storagedriver.StorageDriver, error) {
-		jsonKey, err := os.ReadFile(credentials)
-		if err != nil {
-			panic(fmt.Sprintf("Error reading JSON key : %v", err))
-		}
-
-		var ts oauth2.TokenSource
-		var email string
-		var privateKey []byte
-
-		ts, err = google.DefaultTokenSource(dcontext.Background(), storage.ScopeFullControl)
-		if err != nil {
-			// Assume that the file contents are within the environment variable since it exists
-			// but does not contain a valid file path
-			jwtConfig, err := google.JWTConfigFromJSON(jsonKey, storage.ScopeFullControl)
-			if err != nil {
-				panic(fmt.Sprintf("Error reading JWT config : %s", err))
-			}
-			email = jwtConfig.Email
-			privateKey = jwtConfig.PrivateKey
-			if len(privateKey) == 0 {
-				panic("Error reading JWT config : missing private_key property")
-			}
-			if email == "" {
-				panic("Error reading JWT config : missing client_email property")
-			}
-			ts = jwtConfig.TokenSource(dcontext.Background())
-		}
 
 		gcs, err := storage.NewClient(dcontext.Background(), option.WithCredentialsJSON(jsonKey))
 		if err != nil {

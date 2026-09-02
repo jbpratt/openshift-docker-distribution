@@ -95,7 +95,8 @@ func New(ctx context.Context, params *DriverParameters) (*Driver, error) {
 			Base: base.Base{
 				StorageDriver: d,
 			},
-		}}, nil
+		},
+	}, nil
 }
 
 // Implement the storagedriver.StorageDriver interface.
@@ -284,7 +285,8 @@ func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo,
 				Size:    *props.ContentLength,
 				ModTime: *props.LastModified,
 				IsDir:   false,
-			}}, nil
+			},
+		}, nil
 	}
 
 	// Check if path is a virtual container
@@ -309,7 +311,8 @@ func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo,
 				FileInfoFields: storagedriver.FileInfoFields{
 					Path:  path,
 					IsDir: true,
-				}}, nil
+				},
+			}, nil
 		}
 	}
 
@@ -369,7 +372,7 @@ func (d *driver) Move(ctx context.Context, sourcePath string, destPath string) e
 		}
 	}
 
-	copyStatus := *resp.CopyStatus
+	copyStatus = *resp.CopyStatus
 
 	if d.maxRetries == -1 && copyStatus == blob.CopyStatusTypePending {
 		if _, err := destBlobRef.AbortCopyFromURL(ctx, *resp.CopyID, nil); err != nil {

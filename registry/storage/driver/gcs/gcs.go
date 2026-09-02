@@ -264,9 +264,9 @@ func FromParameters(ctx context.Context, parameters map[string]any) (storagedriv
 	}
 
 	params := driverParameters{
-		bucket:         fmt.Sprint(bucket),
-		rootDirectory:  fmt.Sprint(rootDirectory),
-		client:         httpClient,
+		bucket:        fmt.Sprint(bucket),
+		rootDirectory: fmt.Sprint(rootDirectory),
+		client:        httpClient,
 
 		chunkSize:      chunkSize,
 		maxConcurrency: maxConcurrency,
