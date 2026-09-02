@@ -13,7 +13,6 @@ import (
 	storagedriver "github.com/distribution/distribution/v3/registry/storage/driver"
 	"github.com/distribution/distribution/v3/registry/storage/driver/testsuites"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
@@ -47,7 +46,7 @@ func init() {
 		var email string
 		var privateKey []byte
 
-		creds, err := google.CredentialsFromJSON(context.Background(), jsonKey, storage.ScopeFullControl)
+		creds, err := credentialsFromJSON(context.Background(), jsonKey)
 		if err != nil {
 			panic(fmt.Sprintf("Error reading credentials json file : %s", err))
 		}
@@ -81,6 +80,13 @@ func newDriverConstructor(tb testing.TB) testsuites.DriverConstructor {
 
 	return func() (storagedriver.StorageDriver, error) {
 		return gcsDriverConstructor(root)
+	}
+}
+
+func TestCredentialsFromJSONRejectsUnsupportedType(t *testing.T) {
+	_, err := credentialsFromJSON(context.Background(), []byte(`{"type":"unsupported"}`))
+	if err == nil {
+		t.Fatal("credentialsFromJSON accepted an unsupported credential type")
 	}
 }
 
@@ -339,18 +345,19 @@ func TestURLFor(t *testing.T) {
 	// fetch and verify if signed URL for the stored object is not empty
 	signedURL, err := driver.RedirectURL(httptest.NewRequest(http.MethodGet, filename, nil), filename)
 
-	if credentialsType == "service_account" {
+	switch credentialsType {
+	case "service_account":
 		if err != nil {
 			t.Fatalf("driver.RedirectURL: unexpected error: %v", err)
 		}
 		if len(signedURL) == 0 {
 			t.Fatalf("signed URL is empty")
 		}
-	} else if credentialsType == "external_account" {
+	case "external_account":
 		if err == nil {
 			t.Fatalf("driver.RedirectURL: expected error: %v", storagedriver.ErrUnsupportedMethod{})
 		}
-	} else {
+	default:
 		t.Fatalf("driver.RedirectURL: unexpected credentials type")
 	}
 }

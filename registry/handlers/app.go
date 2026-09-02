@@ -34,7 +34,7 @@ import (
 	"github.com/distribution/distribution/v3/registry/proxy"
 	"github.com/distribution/distribution/v3/registry/storage"
 	memorycache "github.com/distribution/distribution/v3/registry/storage/cache/memory"
-	"github.com/distribution/distribution/v3/registry/storage/cache/provider"
+	cacheprovider "github.com/distribution/distribution/v3/registry/storage/cache/provider"
 	rediscache "github.com/distribution/distribution/v3/registry/storage/cache/redis"
 	storagedriver "github.com/distribution/distribution/v3/registry/storage/driver"
 	"github.com/distribution/distribution/v3/registry/storage/driver/factory"

@@ -481,8 +481,6 @@ func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo,
 
 // List returns a list of the objects that are direct descendants of the given path.
 func (d *driver) List(ctx context.Context, path string) ([]string, error) {
-	var files []string
-
 	prefix := d.swiftPath(path)
 	if prefix != "" {
 		prefix += "/"
@@ -494,6 +492,7 @@ func (d *driver) List(ctx context.Context, path string) ([]string, error) {
 	}
 
 	objects, err := d.Conn.ObjectsAll(ctx, d.Container, opts)
+	files := make([]string, 0, len(objects))
 	for _, obj := range objects {
 		files = append(files, strings.TrimPrefix(strings.TrimSuffix(obj.Name, "/"), d.swiftPath("/")))
 	}
@@ -593,18 +592,19 @@ func (d *driver) Delete(ctx context.Context, path string) error {
 	}
 
 	_, _, err = d.Conn.Object(ctx, d.Container, d.swiftPath(path))
-	if err == nil {
+	switch err {
+	case nil:
 		if err := d.Conn.ObjectDelete(ctx, d.Container, d.swiftPath(path)); err != nil {
 			if err == swift.ObjectNotFound {
 				return storagedriver.PathNotFoundError{Path: path}
 			}
 			return err
 		}
-	} else if err == swift.ObjectNotFound {
+	case swift.ObjectNotFound:
 		if len(objects) == 0 {
 			return storagedriver.PathNotFoundError{Path: path}
 		}
-	} else {
+	default:
 		return err
 	}
 	return nil
